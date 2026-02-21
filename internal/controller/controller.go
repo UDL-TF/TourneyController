@@ -358,7 +358,7 @@ func (c *Controller) buildValues(
 		},
 		"decompressor": map[string]interface{}{
 			"scanBase":     false,
-			"scanOverlays": []string{"serverfiles-dodgeball-base"},
+			"scanOverlays": []string{"serverfiles-dodgeball-tourney"},
 			"cache": map[string]interface{}{
 				"enabled":        true,
 				"type":           "hostPath",
@@ -382,6 +382,43 @@ func (c *Controller) buildValues(
 				"cleanTarget": false,
 				"targetMode":  "writable",
 				"onlyOnInit":  true,
+			},
+		},
+		"overlays": []map[string]interface{}{
+			{
+				"name":         "serverfiles-base-sourcemod",
+				"path":         "/mnt/serverfiles",
+				"sourcePath":   "serverfiles/base/sourcemod",
+				"hostPathType": "Directory",
+				"readOnly":     false,
+			},
+			{
+				"name":         "serverfiles-base-sourcebans",
+				"path":         "/mnt/serverfiles",
+				"sourcePath":   "serverfiles/base/sourcebans",
+				"hostPathType": "Directory",
+				"readOnly":     false,
+			},
+			{
+				"name":         "serverfilesprivate-base",
+				"path":         "/mnt/serverfilesprivate",
+				"sourcePath":   "serverfiles/base",
+				"hostPathType": "Directory",
+				"readOnly":     false,
+			},
+			{
+				"name":         "serverfilesprivate-dodgeball-base",
+				"path":         "/mnt/serverfilesprivate",
+				"sourcePath":   "serverfiles/dodgeball/base",
+				"hostPathType": "Directory",
+				"readOnly":     false,
+			},
+			{
+				"name":         "serverfiles-dodgeball-tourney",
+				"path":         "/mnt/serverfiles",
+				"sourcePath":   "serverfiles/dodgeball/tourney",
+				"hostPathType": "Directory",
+				"readOnly":     false,
 			},
 		},
 		"permissionsInit": map[string]interface{}{
