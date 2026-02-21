@@ -65,6 +65,7 @@ database:
   existingSecret:
     name: ""
     key: ""
+    userKey: ""
 
 ports:
   game: "30000-30299"

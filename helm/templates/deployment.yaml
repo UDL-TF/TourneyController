@@ -80,8 +80,16 @@ spec:
               value: {{ .Values.database.host | quote }}
             - name: DB_PORT
               value: {{ .Values.database.port | quote }}
+{{- if and .Values.database.existingSecret.name .Values.database.existingSecret.userKey }}
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret.name }}
+                  key: {{ .Values.database.existingSecret.userKey }}
+{{- else }}
             - name: DB_USER
               value: {{ .Values.database.user | quote }}
+{{- end }}
             - name: DB_NAME
               value: {{ .Values.database.name | quote }}
             - name: DB_SSLMODE
