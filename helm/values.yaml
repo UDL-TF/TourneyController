@@ -1,0 +1,86 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/udl-tf/tourney-controller
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+rbac:
+  create: true
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+resources: {}
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+extraEnv: []
+extraEnvFrom: []
+extraVolumes: []
+extraVolumeMounts: []
+
+controllerConfig:
+  namespace: ""
+  pollInterval: 30s
+  chartPath: oci://ghcr.io/udl-tf/charts/tf2chart
+  chartValuesFile: /etc/tourney/tf2-values.yaml
+  matchStatuses:
+    - 0
+  divisionFilters: []
+  defaultMap: tfdb_octagon_odb_a1
+  hostNetwork: false
+  nodeIPPreference: external-first
+  externalTrafficPolicy: Cluster
+  notificationsEnabled: true
+  notificationsLinkFormat: /matches/%d
+
+database:
+  host: postgres
+  port: "5432"
+  name: udl
+  user: postgres
+  sslMode: disable
+  maxOpenConns: 10
+  maxIdleConns: 5
+  connMaxLifetime: ""
+  password: ""
+  passwordKey: DB_PASSWORD
+  existingSecret:
+    name: ""
+    key: ""
+
+ports:
+  game: "30000-30299"
+  sourcetv: "30300-30599"
+  client: "40000-40299"
+  steam: "29000-29299"
+
+srcds:
+  tickRate: 128
+  maxPlayersOverride: 0
+  staticToken: ""
+  staticTokenSecret:
+    name: ""
+    key: ""
+  passwordLength: 10
+  rconLength: 46
+
+tf2Chart:
+  values: {}

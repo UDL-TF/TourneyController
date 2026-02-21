@@ -87,7 +87,12 @@ func (c *Controller) reconcileMatch(ctx context.Context, match database.Match) e
 		return fmt.Errorf("fetch division: %w", err)
 	}
 
-	league, err := c.repo.FetchLeague(ctx, division)
+	if !c.divisionMatchesFilter(division.Name) {
+		klog.V(2).Infof("skipping match %d: division %q excluded by filter", match.ID, division.Name)
+		return nil
+	}
+
+	league, err := c.repo.FetchLeague(ctx, division.ID)
 	if err != nil {
 		return fmt.Errorf("fetch league: %w", err)
 	}
@@ -123,14 +128,14 @@ func (c *Controller) reconcileMatch(ctx context.Context, match database.Match) e
 		releaseName := releaseName(match.ID, round.ID)
 
 		if needsServer {
-			if err := c.ensureRound(ctx, match, round, division, league, homeIDs, awayIDs, mapName, details, releaseName); err != nil {
+			if err := c.ensureRound(ctx, match, round, division.ID, league, homeIDs, awayIDs, mapName, details, releaseName); err != nil {
 				klog.Errorf("ensure round %d: %v", round.ID, err)
 			}
 			continue
 		}
 
 		if details != nil {
-			if err := c.teardownRound(ctx, match, round, division, league, homeIDs, awayIDs, mapName, releaseName, details); err != nil {
+			if err := c.teardownRound(ctx, match, round, division.ID, league, homeIDs, awayIDs, mapName, releaseName, details); err != nil {
 				klog.Errorf("teardown round %d: %v", round.ID, err)
 			}
 		}
@@ -143,7 +148,7 @@ func (c *Controller) ensureRound(
 	ctx context.Context,
 	match database.Match,
 	round database.MatchRound,
-	division string,
+	divisionID string,
 	league *database.League,
 	homeIDs, awayIDs []string,
 	mapName string,
@@ -189,7 +194,7 @@ func (c *Controller) ensureRound(
 		return fmt.Errorf("persist secret: %w", err)
 	}
 
-	values := c.buildValues(match, round, division, league, homeIDs, awayIDs, state)
+	values := c.buildValues(match, round, divisionID, league, homeIDs, awayIDs, state)
 	if err := c.applyHelmRelease(ctx, releaseName, values); err != nil {
 		return fmt.Errorf("apply helm release: %w", err)
 	}
@@ -228,7 +233,7 @@ func (c *Controller) teardownRound(
 	ctx context.Context,
 	match database.Match,
 	round database.MatchRound,
-	division string,
+	divisionID string,
 	league *database.League,
 	homeIDs, awayIDs []string,
 	mapName, releaseName string,
@@ -254,7 +259,7 @@ func (c *Controller) teardownRound(
 		}
 	}
 
-	if err := c.deleteHelmRelease(ctx, releaseName, c.buildValues(match, round, division, league, homeIDs, awayIDs, state)); err != nil {
+	if err := c.deleteHelmRelease(ctx, releaseName, c.buildValues(match, round, divisionID, league, homeIDs, awayIDs, state)); err != nil {
 		return fmt.Errorf("delete helm release: %w", err)
 	}
 
@@ -273,7 +278,7 @@ func (c *Controller) teardownRound(
 func (c *Controller) buildValues(
 	match database.Match,
 	round database.MatchRound,
-	division string,
+	divisionID string,
 	league *database.League,
 	homeIDs, awayIDs []string,
 	state *serverState,
@@ -389,7 +394,7 @@ func (c *Controller) buildValues(
 		"podLabels": map[string]interface{}{
 			"udl.tf/match-id": strconv.Itoa(match.ID),
 			"udl.tf/round-id": strconv.Itoa(round.ID),
-			"udl.tf/division": division,
+			"udl.tf/division": divisionID,
 		},
 	}
 
@@ -402,6 +407,26 @@ func (c *Controller) buildValues(
 	}
 
 	return values
+}
+
+func (c *Controller) divisionMatchesFilter(name string) bool {
+	filters := c.cfg.Match.DivisionFilters
+	if len(filters) == 0 {
+		return true
+	}
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "" {
+		return false
+	}
+	for _, filter := range filters {
+		if filter == "" {
+			continue
+		}
+		if strings.Contains(normalized, filter) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) applyHelmRelease(ctx context.Context, releaseName string, overrides chartutil.Values) error {

@@ -1,0 +1,166 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tourney-controller.fullname" . }}
+  labels:
+{{ include "tourney-controller.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+{{ include "tourney-controller.selectorLabels" . | indent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "tourney-controller.selectorLabels" . | indent 8 }}
+{{- if .Values.podLabels }}
+{{ toYaml .Values.podLabels | indent 8 }}
+{{- end }}
+{{- if .Values.podAnnotations }}
+      annotations:
+{{ toYaml .Values.podAnnotations | indent 8 }}
+{{- end }}
+    spec:
+      serviceAccountName: {{ include "tourney-controller.serviceAccountName" . }}
+{{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- range .Values.imagePullSecrets }}
+        - name: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName | quote }}
+{{- end }}
+{{- if .Values.podSecurityContext }}
+      securityContext:
+{{ toYaml .Values.podSecurityContext | indent 8 }}
+{{- end }}
+{{- if .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+{{- end }}
+{{- if .Values.affinity }}
+      affinity:
+{{ toYaml .Values.affinity | indent 8 }}
+{{- end }}
+{{- if .Values.tolerations }}
+      tolerations:
+{{ toYaml .Values.tolerations | indent 8 }}
+{{- end }}
+{{- $hasVolumes := or .Values.tf2Chart.values .Values.extraVolumes }}
+{{- if $hasVolumes }}
+      volumes:
+{{- if .Values.tf2Chart.values }}
+        - name: tf2-values
+          configMap:
+            name: {{ include "tourney-controller.tf2ValuesConfigMap" . }}
+{{- end }}
+{{- if .Values.extraVolumes }}
+{{ toYaml .Values.extraVolumes | indent 8 }}
+{{- end }}
+{{- end }}
+      containers:
+        - name: controller
+          image: {{ printf "%s:%s" .Values.image.repository ((default .Chart.AppVersion .Values.image.tag) | default "latest") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+{{- if .Values.securityContext }}
+          securityContext:
+{{ toYaml .Values.securityContext | indent 12 }}
+{{- end }}
+          env:
+            - name: NAMESPACE
+              value: {{ include "tourney-controller.targetNamespace" . | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.controllerConfig.pollInterval | quote }}
+            - name: CHART_PATH
+              value: {{ .Values.controllerConfig.chartPath | quote }}
+            - name: CHART_VALUES_FILE
+              value: {{ .Values.controllerConfig.chartValuesFile | quote }}
+            - name: DB_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: DB_USER
+              value: {{ .Values.database.user | quote }}
+            - name: DB_NAME
+              value: {{ .Values.database.name | quote }}
+            - name: DB_SSLMODE
+              value: {{ .Values.database.sslMode | quote }}
+            - name: DB_MAX_OPEN_CONNS
+              value: {{ .Values.database.maxOpenConns | toString | quote }}
+            - name: DB_MAX_IDLE_CONNS
+              value: {{ .Values.database.maxIdleConns | toString | quote }}
+            - name: DB_CONN_MAX_LIFETIME
+              value: {{ default "" .Values.database.connMaxLifetime | quote }}
+            - name: PORT_RANGE_GAME
+              value: {{ .Values.ports.game | quote }}
+            - name: PORT_RANGE_SOURCETV
+              value: {{ .Values.ports.sourcetv | quote }}
+            - name: PORT_RANGE_CLIENT
+              value: {{ .Values.ports.client | quote }}
+            - name: PORT_RANGE_STEAM
+              value: {{ .Values.ports.steam | quote }}
+            - name: SRCDS_TICKRATE
+              value: {{ .Values.srcds.tickRate | toString | quote }}
+            - name: SRCDS_MAX_PLAYERS_OVERRIDE
+              value: {{ .Values.srcds.maxPlayersOverride | toString | quote }}
+            - name: SRCDS_PASSWORD_LENGTH
+              value: {{ .Values.srcds.passwordLength | toString | quote }}
+            - name: SRCDS_RCON_LENGTH
+              value: {{ .Values.srcds.rconLength | toString | quote }}
+            - name: MATCH_STATUSES
+              value: {{ include "tourney-controller.matchStatuses" . | quote }}
+            - name: MATCH_DIVISION_FILTERS
+              value: {{ join "," (.Values.controllerConfig.divisionFilters | default (list)) | quote }}
+            - name: DEFAULT_MAP
+              value: {{ .Values.controllerConfig.defaultMap | quote }}
+            - name: HOST_NETWORK
+              value: {{ .Values.controllerConfig.hostNetwork | toString | quote }}
+            - name: NODE_IP_PREFERENCE
+              value: {{ .Values.controllerConfig.nodeIPPreference | quote }}
+            - name: SERVICE_EXTERNAL_TRAFFIC_POLICY
+              value: {{ .Values.controllerConfig.externalTrafficPolicy | quote }}
+            - name: NOTIFICATIONS_ENABLED
+              value: {{ .Values.controllerConfig.notificationsEnabled | toString | quote }}
+            - name: NOTIFICATIONS_LINK_FORMAT
+              value: {{ .Values.controllerConfig.notificationsLinkFormat | quote }}
+{{- if or .Values.database.password .Values.database.existingSecret.name }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.database.existingSecret.name }}{{ .Values.database.existingSecret.name }}{{ else }}{{ include "tourney-controller.dbSecretName" . }}{{ end }}
+                  key: {{ if .Values.database.existingSecret.key }}{{ .Values.database.existingSecret.key }}{{ else }}{{ .Values.database.passwordKey }}{{ end }}
+{{- end }}
+{{- if .Values.srcds.staticTokenSecret.name }}
+            - name: SRCDS_STATIC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.srcds.staticTokenSecret.name }}
+                  key: {{ default "token" .Values.srcds.staticTokenSecret.key }}
+{{- else }}
+            - name: SRCDS_STATIC_TOKEN
+              value: {{ .Values.srcds.staticToken | quote }}
+{{- end }}
+{{- if .Values.extraEnv }}
+{{ toYaml .Values.extraEnv | indent 12 }}
+{{- end }}
+{{- if .Values.extraEnvFrom }}
+          envFrom:
+{{ toYaml .Values.extraEnvFrom | indent 12 }}
+{{- end }}
+{{- $hasMounts := or .Values.tf2Chart.values .Values.extraVolumeMounts }}
+{{- if $hasMounts }}
+          volumeMounts:
+{{- if .Values.tf2Chart.values }}
+            - name: tf2-values
+              mountPath: {{ .Values.controllerConfig.chartValuesFile | quote }}
+              subPath: values.yaml
+{{- end }}
+{{- if .Values.extraVolumeMounts }}
+{{ toYaml .Values.extraVolumeMounts | indent 12 }}
+{{- end }}
+{{- end }}
+{{- if .Values.resources }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+{{- end }}

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: tourney-controller
+description: Helm chart for deploying the UDL Tournament Controller
+kubeVersion: ">=1.26.0"
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

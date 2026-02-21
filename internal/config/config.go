@@ -90,8 +90,9 @@ type SRCDSConfig struct {
 
 // MatchConfig configures which matches should be reconciled.
 type MatchConfig struct {
-	TargetStatuses []int
-	DefaultMap     string
+	TargetStatuses  []int
+	DefaultMap      string
+	DivisionFilters []string
 }
 
 // NetworkingConfig controls Kubernetes networking knobs.
@@ -214,9 +215,15 @@ func Load() (*Config, error) {
 		return nil, errors.New("MATCH_STATUSES must include at least one status code")
 	}
 
+	divisionFilters := parseStringSlice(getEnv("MATCH_DIVISION_FILTERS", ""))
+	for i := range divisionFilters {
+		divisionFilters[i] = strings.ToLower(divisionFilters[i])
+	}
+
 	cfg.Match = MatchConfig{
-		TargetStatuses: statuses,
-		DefaultMap:     getEnv("DEFAULT_MAP", "tfdb_octagon_odb_a1"),
+		TargetStatuses:  statuses,
+		DefaultMap:      getEnv("DEFAULT_MAP", "tfdb_octagon_odb_a1"),
+		DivisionFilters: divisionFilters,
 	}
 
 	hostNetwork, err := getEnvBool("HOST_NETWORK", false)
@@ -341,4 +348,20 @@ func parseIntSlice(raw string) ([]int, error) {
 		out = append(out, num)
 	}
 	return out, nil
+}
+
+func parseStringSlice(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []string{}
+	}
+	parts := strings.Split(trimmed, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }

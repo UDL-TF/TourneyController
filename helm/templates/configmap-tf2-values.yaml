@@ -1,0 +1,11 @@
+{{- if .Values.tf2Chart.values }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tourney-controller.tf2ValuesConfigMap" . }}
+  labels:
+{{ include "tourney-controller.labels" . | indent 4 }}
+data:
+  values.yaml: |
+{{ toYaml .Values.tf2Chart.values | indent 4 }}
+{{- end }}

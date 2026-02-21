@@ -101,6 +101,12 @@ type League struct {
 	PointsPerForfeitDraw float32
 }
 
+// Division captures the identifier and display name for a division.
+type Division struct {
+	ID   string
+	Name string
+}
+
 // FetchMatches returns all matches whose status is in the provided set.
 func (r *Repository) FetchMatches(ctx context.Context, statuses []int) ([]Match, error) {
 	rows, err := r.db.QueryContext(ctx, `
@@ -127,15 +133,18 @@ func (r *Repository) FetchMatches(ctx context.Context, statuses []int) ([]Match,
 	return matches, nil
 }
 
-// FetchDivision returns the division ID for a roster.
-func (r *Repository) FetchDivision(ctx context.Context, rosterID int) (string, error) {
-	var division string
+// FetchDivision returns the division metadata for a roster.
+func (r *Repository) FetchDivision(ctx context.Context, rosterID int) (*Division, error) {
+	var division Division
 	if err := r.db.QueryRowContext(ctx, `
-        SELECT division_id FROM league_rosters WHERE id = $1
-    `, rosterID).Scan(&division); err != nil {
-		return "", fmt.Errorf("fetch division for roster %d: %w", rosterID, err)
+	        SELECT lr.division_id, ld.name
+	        FROM league_rosters lr
+	        JOIN league_divisions ld ON ld.id = lr.division_id
+	        WHERE lr.id = $1
+	    `, rosterID).Scan(&division.ID, &division.Name); err != nil {
+		return nil, fmt.Errorf("fetch division for roster %d: %w", rosterID, err)
 	}
-	return division, nil
+	return &division, nil
 }
 
 // FetchLeague loads the League metadata by division ID.
