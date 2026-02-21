@@ -149,6 +149,27 @@ spec:
             - name: SRCDS_STATIC_TOKEN
               value: {{ .Values.srcds.staticToken | quote }}
 {{- end }}
+{{- if .Values.steam.apiKeySecret.name }}
+            - name: STEAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.steam.apiKeySecret.name }}
+                  key: {{ default "api-key" .Values.steam.apiKeySecret.key }}
+{{- else if .Values.steam.apiKey }}
+            - name: STEAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tourney-controller.steamSecretName" . }}
+                  key: api-key
+{{- end }}
+            - name: STEAM_APP_ID
+              value: {{ .Values.steam.appId | toString | quote }}
+            - name: STEAM_AUTO_TOKENS
+              value: {{ .Values.steam.autoTokens | toString | quote }}
+            - name: STEAM_TOKEN_CLEANUP
+              value: {{ .Values.steam.tokenCleanup | toString | quote }}
+            - name: STEAM_TOKEN_MEMO_TEMPLATE
+              value: {{ .Values.steam.tokenMemoTemplate | quote }}
 {{- if .Values.extraEnv }}
 {{ toYaml .Values.extraEnv | indent 12 }}
 {{- end }}

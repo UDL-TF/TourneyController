@@ -17,6 +17,7 @@ type Config struct {
 	Database      DatabaseConfig
 	Ports         PortsConfig
 	SRCDS         SRCDSConfig
+	Steam         SteamConfig
 	Match         MatchConfig
 	Networking    NetworkingConfig
 	Notifications NotificationConfig
@@ -86,6 +87,15 @@ type SRCDSConfig struct {
 	StaticToken        string
 	PasswordLength     int
 	RCONLength         int
+}
+
+// SteamConfig configures Steam Web API integration for automatic token generation.
+type SteamConfig struct {
+	APIKey             string
+	AppID              int
+	EnableAutoTokens   bool
+	EnableTokenCleanup bool
+	TokenMemoTemplate  string
 }
 
 // MatchConfig configures which matches should be reconciled.
@@ -205,6 +215,29 @@ func Load() (*Config, error) {
 		StaticToken:        os.Getenv("SRCDS_STATIC_TOKEN"),
 		PasswordLength:     passwordLength,
 		RCONLength:         rconLength,
+	}
+
+	steamAppID, err := getEnvInt("STEAM_APP_ID", 440)
+	if err != nil {
+		return nil, fmt.Errorf("invalid STEAM_APP_ID: %w", err)
+	}
+
+	steamAutoTokens, err := getEnvBool("STEAM_AUTO_TOKENS", false)
+	if err != nil {
+		return nil, fmt.Errorf("invalid STEAM_AUTO_TOKENS: %w", err)
+	}
+
+	steamTokenCleanup, err := getEnvBool("STEAM_TOKEN_CLEANUP", false)
+	if err != nil {
+		return nil, fmt.Errorf("invalid STEAM_TOKEN_CLEANUP: %w", err)
+	}
+
+	cfg.Steam = SteamConfig{
+		APIKey:             os.Getenv("STEAM_API_KEY"),
+		AppID:              steamAppID,
+		EnableAutoTokens:   steamAutoTokens,
+		EnableTokenCleanup: steamTokenCleanup,
+		TokenMemoTemplate:  getEnv("STEAM_TOKEN_MEMO_TEMPLATE", "UDL Match %d Round %d"),
 	}
 
 	statuses, err := parseIntSlice(getEnv("MATCH_STATUSES", "0"))

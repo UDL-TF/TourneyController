@@ -59,6 +59,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-db" (include "tourney-controller.fullname" .) -}}
 {{- end -}}
 
+{{- define "tourney-controller.steamSecretName" -}}
+{{- printf "%s-steam" (include "tourney-controller.fullname" .) -}}
+{{- end -}}
+
 {{- define "tourney-controller.tf2ValuesConfigMap" -}}
 {{- printf "%s-tf2-values" (include "tourney-controller.fullname" .) -}}
 {{- end -}}

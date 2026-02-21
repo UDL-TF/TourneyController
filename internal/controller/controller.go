@@ -22,6 +22,7 @@ import (
 	"github.com/UDL-TF/TourneyController/internal/config"
 	"github.com/UDL-TF/TourneyController/internal/database"
 	"github.com/UDL-TF/TourneyController/internal/ports"
+	"github.com/UDL-TF/TourneyController/internal/steam"
 )
 
 // Controller coordinates database polling with Kubernetes reconciliation.
@@ -31,16 +32,23 @@ type Controller struct {
 	clientset     kubernetes.Interface
 	portAllocator *ports.Allocator
 	renderer      *chart.Renderer
+	steamClient   *steam.SteamClient
 }
 
 // New wires together the reconciliation dependencies.
 func New(cfg *config.Config, repo *database.Repository, clientset kubernetes.Interface, renderer *chart.Renderer) *Controller {
+	var steamClient *steam.SteamClient
+	if cfg.Steam.EnableAutoTokens && cfg.Steam.APIKey != "" {
+		steamClient = steam.NewSteamClient(cfg.Steam.APIKey)
+	}
+
 	return &Controller{
 		cfg:           cfg,
 		repo:          repo,
 		clientset:     clientset,
 		portAllocator: ports.NewAllocator(cfg.Ports),
 		renderer:      renderer,
+		steamClient:   steamClient,
 	}
 }
 
@@ -174,19 +182,32 @@ func (c *Controller) ensureRound(
 		if err != nil {
 			return fmt.Errorf("generate rcon: %w", err)
 		}
+
+		token, err := c.generateSRCDSToken(match.ID, round.ID)
+		if err != nil {
+			klog.Warningf("failed to generate SRCDS token: %v, falling back to static token", err)
+			token = c.cfg.SRCDS.StaticToken
+		}
+
 		state = &serverState{
 			ReleaseName: releaseName,
 			Ports:       assign,
 			Password:    password,
 			RCON:        rcon,
 			Map:         mapName,
-			Token:       c.cfg.SRCDS.StaticToken,
+			Token:       token,
 		}
 		isNew = true
 	} else {
 		state.Map = preferValue(mapName, state.Map, c.cfg.Match.DefaultMap)
 		if state.Token == "" {
-			state.Token = c.cfg.SRCDS.StaticToken
+			token, err := c.generateSRCDSToken(match.ID, round.ID)
+			if err != nil {
+				klog.Warningf("failed to generate SRCDS token for existing server: %v, falling back to static token", err)
+				state.Token = c.cfg.SRCDS.StaticToken
+			} else {
+				state.Token = token
+			}
 		}
 	}
 
@@ -269,6 +290,11 @@ func (c *Controller) teardownRound(
 
 	if err := c.deleteStateSecret(ctx, releaseName); err != nil {
 		return fmt.Errorf("delete secret: %w", err)
+	}
+
+	// Clean up Steam token if enabled
+	if err := c.cleanupSRCDSToken(match.ID, round.ID); err != nil {
+		klog.Warningf("failed to cleanup SRCDS token for match %d round %d: %v", match.ID, round.ID, err)
 	}
 
 	klog.Infof("tore down server for match %d round %d", match.ID, round.ID)
@@ -671,6 +697,59 @@ func preferValue(primary string, fallbacks ...string) string {
 		}
 	}
 	return ""
+}
+
+// generateSRCDSToken creates a new SRCDS token using Steam Web API if configured,
+// otherwise falls back to the static token.
+func (c *Controller) generateSRCDSToken(matchID int, roundID int) (string, error) {
+	// If auto token generation is disabled or no Steam client, use static token
+	if !c.cfg.Steam.EnableAutoTokens || c.steamClient == nil {
+		return c.cfg.SRCDS.StaticToken, nil
+	}
+
+	// Generate memo for the token using the template
+	memo := fmt.Sprintf(c.cfg.Steam.TokenMemoTemplate, matchID, roundID)
+
+	// Create a new Steam account for this server
+	account, err := c.steamClient.CreateAccount(c.cfg.Steam.AppID, memo)
+	if err != nil {
+		return "", fmt.Errorf("create steam account: %w", err)
+	}
+
+	klog.V(2).Infof("created SRCDS token for match %d round %d: steamid=%s", matchID, roundID, account.SteamID)
+
+	return account.LoginToken, nil
+}
+
+// cleanupSRCDSToken attempts to delete the Steam account associated with a match/round
+// if token cleanup is enabled.
+func (c *Controller) cleanupSRCDSToken(matchID int, roundID int) error {
+	// If token cleanup is disabled or no Steam client, nothing to do
+	if !c.cfg.Steam.EnableTokenCleanup || c.steamClient == nil {
+		return nil
+	}
+
+	// Generate memo pattern to search for
+	memo := fmt.Sprintf(c.cfg.Steam.TokenMemoTemplate, matchID, roundID)
+
+	// Get all Steam accounts
+	accounts, err := c.steamClient.GetAccountList()
+	if err != nil {
+		return fmt.Errorf("get account list: %w", err)
+	}
+
+	// Find and delete accounts with matching memo
+	for _, account := range accounts {
+		if account.Memo == memo && !account.IsDeleted {
+			if err := c.steamClient.DeleteAccount(account.SteamID); err != nil {
+				klog.Warningf("failed to delete Steam account %s: %v", account.SteamID, err)
+			} else {
+				klog.V(2).Infof("deleted Steam account %s for match %d round %d", account.SteamID, matchID, roundID)
+			}
+		}
+	}
+
+	return nil
 }
 
 type serverState struct {

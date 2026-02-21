@@ -83,5 +83,17 @@ srcds:
   passwordLength: 10
   rconLength: 46
 
+steam:
+  # Steam Web API configuration for automatic SRCDS token generation
+  apiKey: ""
+  apiKeySecret:
+    # Use existing secret for Steam API key instead of plain text
+    name: ""
+    key: "api-key"
+  appId: 440  # TF2 App ID
+  autoTokens: false
+  tokenCleanup: false
+  tokenMemoTemplate: "UDL Match %d Round %d"
+
 tf2Chart:
   values: {}
