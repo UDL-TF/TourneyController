@@ -403,8 +403,8 @@ func (c *Controller) buildValues(
 		"copyTemplates": []map[string]interface{}{
 			{
 				"targetPath":  "tf/addons/sourcemod/configs/sourcebans",
-				"overlay":     "serverfiles-base",
-				"sourcePath":  "serverfiles/base/addons/sourcemod/configs/sourcebans",
+				"overlay":     "serverfiles-base-sourcebans",
+				"sourcePath":  "serverfiles/base/sourcebans/addons/sourcemod/configs/sourcebans",
 				"cleanTarget": false,
 				"targetMode":  "writable",
 				"onlyOnInit":  true,
@@ -440,9 +440,9 @@ func (c *Controller) buildValues(
 				"readOnly":     false,
 			},
 			{
-				"name":         "serverfiles-dodgeball-tourney",
+				"name":         "serverfiles-dodgeball-tournament",
 				"path":         "/mnt/serverfiles",
-				"sourcePath":   "serverfiles/dodgeball/tourney",
+				"sourcePath":   "serverfiles/dodgeball/tournament",
 				"hostPathType": "Directory",
 				"readOnly":     false,
 			},
