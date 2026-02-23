@@ -39,7 +39,7 @@ extraVolumeMounts: []
 controllerConfig:
   namespace: ""
   pollInterval: 30s
-  chartPath: oci://ghcr.io/udl-tf/charts/tf2chart
+  chartPath: oci://ghcr.io/udl-tf/charts/tf2chart:0.1.0
   chartValuesFile: /etc/tourney/tf2-values.yaml
   matchStatuses:
     - 0
@@ -70,8 +70,8 @@ database:
 ports:
   game: "30000-30299"
   sourcetv: "30300-30599"
-  client: "40000-40299"
-  steam: "29000-29299"
+  client: "30600-30899"
+  steam: "30900-31199"
 
 srcds:
   tickRate: 128
@@ -93,7 +93,7 @@ steam:
   appId: 440  # TF2 App ID
   autoTokens: false
   tokenCleanup: false
-  tokenMemoTemplate: "UDL Match %d Round %d"
+  tokenMemoTemplate: "UDL TF2 Tournament - Match #%d Round #%d Server"
 
 tf2Chart:
   values: {}
