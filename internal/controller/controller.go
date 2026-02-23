@@ -384,7 +384,7 @@ func (c *Controller) buildValues(
 		},
 		"decompressor": map[string]interface{}{
 			"scanBase":     false,
-			"scanOverlays": []string{"serverfiles-dodgeball-tourney"},
+			"scanOverlays": []string{"serverfiles-dodgeball-tournament"},
 			"cache": map[string]interface{}{
 				"enabled":        true,
 				"type":           "hostPath",
