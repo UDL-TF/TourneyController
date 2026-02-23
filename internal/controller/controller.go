@@ -353,13 +353,21 @@ func (c *Controller) buildValues(
 		servicePort("steam", state.Ports.Steam, state.Ports.Steam, "UDP"),
 	}
 
+	// Always create services for port tracking, even with hostNetwork
 	serviceConfig := map[string]interface{}{
-		"enabled": !c.cfg.Networking.HostNetwork,
+		"enabled":      true,
+		"type":         "NodePort",
+		"nameOverride": state.ReleaseName,
+		"ports":        servicePorts,
 	}
-	if serviceConfig["enabled"].(bool) {
-		serviceConfig["type"] = "NodePort"
-		serviceConfig["nameOverride"] = state.ReleaseName
-		serviceConfig["ports"] = servicePorts
+
+	// When using hostNetwork, add annotation to indicate this service is for port tracking only
+	if c.cfg.Networking.HostNetwork {
+		serviceConfig["annotations"] = map[string]interface{}{
+			"udl.tf/purpose":     "port-tracking-only",
+			"udl.tf/hostNetwork": "true",
+		}
+		// Note: Service still uses NodePort type to reserve port numbers for allocation tracking
 	}
 
 	values := chartutil.Values{
@@ -464,7 +472,11 @@ func (c *Controller) buildValues(
 	if c.cfg.Networking.HostNetwork {
 		values["hostNetwork"] = true
 		values["dnsPolicy"] = "ClusterFirstWithHostNet"
-	} else if c.cfg.Networking.ExternalTrafficPolicy != "" {
+	}
+
+	// Apply external traffic policy if configured, regardless of hostNetwork setting
+	// (for consistency and potential future use cases)
+	if c.cfg.Networking.ExternalTrafficPolicy != "" {
 		service := values["service"].(map[string]interface{})
 		service["externalTrafficPolicy"] = c.cfg.Networking.ExternalTrafficPolicy
 	}
