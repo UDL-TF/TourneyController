@@ -45,7 +45,7 @@ controllerConfig:
     - 0
   divisionFilters: []
   defaultMap: tfdb_octagon_odb_a1
-  hostNetwork: false
+  hostNetwork: true
   nodeIPPreference: external-first
   externalTrafficPolicy: Cluster
   notificationsEnabled: true
