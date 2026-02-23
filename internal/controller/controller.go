@@ -170,7 +170,9 @@ func (c *Controller) ensureRound(
 
 	isNew := false
 	if state == nil {
-		assign, err := c.portAllocator.Allocate(ctx, c.clientset.CoreV1().Services(c.cfg.Namespace))
+		assign, err := c.portAllocator.AllocateWithSecrets(ctx,
+			c.clientset.CoreV1().Services(c.cfg.Namespace),
+			c.clientset.CoreV1().Secrets(c.cfg.Namespace))
 		if err != nil {
 			return fmt.Errorf("allocate ports: %w", err)
 		}
@@ -353,21 +355,16 @@ func (c *Controller) buildValues(
 		servicePort("steam", state.Ports.Steam, state.Ports.Steam, "UDP"),
 	}
 
-	// Always create services for port tracking, even with hostNetwork
+	// Service configuration depends on hostNetwork setting
 	serviceConfig := map[string]interface{}{
-		"enabled":      true,
-		"type":         "NodePort",
-		"nameOverride": state.ReleaseName,
-		"ports":        servicePorts,
+		"enabled": !c.cfg.Networking.HostNetwork, // Disable services when using hostNetwork
 	}
 
-	// When using hostNetwork, add annotation to indicate this service is for port tracking only
-	if c.cfg.Networking.HostNetwork {
-		serviceConfig["annotations"] = map[string]interface{}{
-			"udl.tf/purpose":     "port-tracking-only",
-			"udl.tf/hostNetwork": "true",
-		}
-		// Note: Service still uses NodePort type to reserve port numbers for allocation tracking
+	// Only configure service details when services are enabled
+	if serviceConfig["enabled"].(bool) {
+		serviceConfig["type"] = "NodePort"
+		serviceConfig["nameOverride"] = state.ReleaseName
+		serviceConfig["ports"] = servicePorts
 	}
 
 	values := chartutil.Values{
