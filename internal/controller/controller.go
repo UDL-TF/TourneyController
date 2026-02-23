@@ -355,16 +355,20 @@ func (c *Controller) buildValues(
 		servicePort("steam", state.Ports.Steam, state.Ports.Steam, "UDP"),
 	}
 
-	// Service configuration depends on hostNetwork setting
+	// Always create services for port tracking and operational visibility
 	serviceConfig := map[string]interface{}{
-		"enabled": !c.cfg.Networking.HostNetwork, // Disable services when using hostNetwork
+		"enabled":      true,
+		"type":         "NodePort",
+		"nameOverride": state.ReleaseName,
+		"ports":        servicePorts,
 	}
 
-	// Only configure service details when services are enabled
-	if serviceConfig["enabled"].(bool) {
-		serviceConfig["type"] = "NodePort"
-		serviceConfig["nameOverride"] = state.ReleaseName
-		serviceConfig["ports"] = servicePorts
+	// Add metadata when using hostNetwork to clarify purpose
+	if c.cfg.Networking.HostNetwork {
+		serviceConfig["annotations"] = map[string]interface{}{
+			"udl.tf/purpose":     "port-tracking",
+			"udl.tf/hostNetwork": "true",
+		}
 	}
 
 	values := chartutil.Values{
