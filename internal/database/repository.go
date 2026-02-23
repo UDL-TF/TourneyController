@@ -376,3 +376,47 @@ func (r *Repository) createUserNotification(ctx context.Context, userID int, mes
 	}
 	return nil
 }
+
+// FetchMatchByID fetches a match by its ID
+func (r *Repository) FetchMatchByID(ctx context.Context, matchID int) (*Match, error) {
+	var match Match
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, home_team_id, away_team_id, win_limit, status, manual_not_done
+		FROM league_matches
+		WHERE id = $1
+	`, matchID).Scan(&match.ID, &match.RosterHomeID, &match.RosterAwayID, &match.WinLimit, &match.Status, &match.ManualNotDone)
+	
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("match with ID %d not found", matchID)
+		}
+		return nil, fmt.Errorf("fetch match %d: %w", matchID, err)
+	}
+	
+	return &match, nil
+}
+
+// FetchMatchRoundByID fetches a specific round for a match
+func (r *Repository) FetchMatchRoundByID(ctx context.Context, matchID, roundID int) (*MatchRound, error) {
+	var round MatchRound
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, match_id, map_id, home_team_score, away_team_score, 
+		       loser_squad_id, winner_squad_id, 
+		       CASE WHEN loser_squad_id IS NOT NULL OR winner_squad_id IS NOT NULL THEN true ELSE false END,
+		       COALESCE(home_team_score, 0) - COALESCE(away_team_score, 0),
+		       home_ready, away_ready
+		FROM league_match_rounds
+		WHERE match_id = $1 AND id = $2
+	`, matchID, roundID).Scan(&round.ID, &round.MatchID, &round.MapID, &round.HomeTeamScore, 
+		&round.AwayTeamScore, &round.LoserID, &round.WinnerID, &round.HasOutcome, 
+		&round.ScoreDifference, &round.HomeReady, &round.AwayReady)
+	
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("round %d for match %d not found", roundID, matchID)
+		}
+		return nil, fmt.Errorf("fetch round %d for match %d: %w", roundID, matchID, err)
+	}
+	
+	return &round, nil
+}

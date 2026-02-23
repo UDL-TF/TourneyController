@@ -771,3 +771,75 @@ const (
 	secretKeyMap        = "map"
 	secretKeyToken      = "token"
 )
+
+// DeleteServer deletes a tournament server and all associated resources for a specific match and round.
+// This method performs a complete cleanup of the server including:
+// - Helm release (pods, services, etc.)
+// - Database match details
+// - State secrets
+// - Steam tokens (if enabled)
+func (c *Controller) DeleteServer(ctx context.Context, matchID, roundID int) error {
+	klog.Infof("deleting server for match %d round %d", matchID, roundID)
+
+	// Fetch match data
+	match, err := c.repo.FetchMatchByID(ctx, matchID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch match %d: %w", matchID, err)
+	}
+
+	// Fetch round data
+	round, err := c.repo.FetchMatchRoundByID(ctx, matchID, roundID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch round %d for match %d: %w", roundID, matchID, err)
+	}
+
+	// Fetch division data
+	division, err := c.repo.FetchDivision(ctx, match.RosterHomeID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch division for match %d: %w", matchID, err)
+	}
+
+	// Fetch league data
+	league, err := c.repo.FetchLeague(ctx, division.ID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch league for match %d: %w", matchID, err)
+	}
+
+	// Fetch team steam IDs
+	homeIDs, err := c.repo.FetchTeamSteamIDs(ctx, match.RosterHomeID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch home team steam IDs for match %d: %w", matchID, err)
+	}
+
+	awayIDs, err := c.repo.FetchTeamSteamIDs(ctx, match.RosterAwayID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch away team steam IDs for match %d: %w", matchID, err)
+	}
+
+	// Fetch map name
+	mapName := c.cfg.Match.DefaultMap
+	if round.MapID > 0 {
+		if fetchedMapName, err := c.repo.FetchMapName(ctx, round.MapID); err == nil {
+			mapName = fetchedMapName
+		} else {
+			klog.Warningf("failed to fetch map name for round %d, using default: %v", roundID, err)
+		}
+	}
+
+	// Fetch match details
+	details, err := c.repo.FetchMatchDetails(ctx, matchID, roundID)
+	if err != nil {
+		klog.Warningf("failed to fetch match details for match %d round %d: %v", matchID, roundID, err)
+	}
+
+	releaseName := releaseName(matchID, roundID)
+	klog.Infof("using release name: %s", releaseName)
+
+	// Use teardownRound to perform the actual cleanup
+	if err := c.teardownRound(ctx, *match, *round, division.ID, league, homeIDs, awayIDs, mapName, releaseName, details); err != nil {
+		return fmt.Errorf("failed to teardown round: %w", err)
+	}
+
+	klog.Infof("successfully deleted server for match %d round %d", matchID, roundID)
+	return nil
+}

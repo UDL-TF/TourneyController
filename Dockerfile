@@ -40,4 +40,4 @@ COPY --from=builder /build/controller /controller
 USER 65534:65534
 
 # Run the controller
-ENTRYPOINT ["/controller"]
+ENTRYPOINT ["/controller", "run"]
