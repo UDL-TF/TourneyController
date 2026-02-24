@@ -222,30 +222,54 @@ func (c *Controller) ensureRound(
 		return fmt.Errorf("apply helm release: %w", err)
 	}
 
-	nodeIP, err := c.pickNodeIP(ctx)
+	// Check if the deployment is ready before creating match details
+	ready, err := c.isDeploymentReady(ctx, releaseName)
 	if err != nil {
-		return fmt.Errorf("discover node ip: %w", err)
+		klog.Warningf("failed to check deployment status for match %d round %d: %v", match.ID, round.ID, err)
 	}
 
-	detailsPayload := database.MatchDetails{
-		MatchID:      match.ID,
-		RoundID:      round.ID,
-		ServerIP:     nodeIP,
-		Port:         state.Ports.Game,
-		SourceTVPort: state.Ports.SourceTV,
-		Password:     state.Password,
-		Map:          preferValue(state.Map, mapName, c.cfg.Match.DefaultMap),
+	// Only create/update match details if deployment is ready
+	if ready {
+		nodeIP, err := c.pickNodeIP(ctx)
+		if err != nil {
+			return fmt.Errorf("discover node ip: %w", err)
+		}
+
+		detailsPayload := database.MatchDetails{
+			MatchID:      match.ID,
+			RoundID:      round.ID,
+			ServerIP:     nodeIP,
+			Port:         state.Ports.Game,
+			SourceTVPort: state.Ports.SourceTV,
+			Password:     state.Password,
+			Map:          preferValue(state.Map, mapName, c.cfg.Match.DefaultMap),
+		}
+
+		if err := c.repo.UpsertMatchDetails(ctx, detailsPayload); err != nil {
+			return fmt.Errorf("upsert match details: %w", err)
+		}
+	} else {
+		klog.V(2).Infof("deployment not ready yet for match %d round %d, skipping match details creation", match.ID, round.ID)
+		// If details already exist from a previous run but deployment is not ready now,
+		// we should consider deleting them
+		if details != nil {
+			if err := c.repo.DeleteMatchDetails(ctx, match.ID, round.ID); err != nil {
+				klog.Warningf("failed to delete stale match details for match %d round %d: %v", match.ID, round.ID, err)
+			}
+		}
 	}
 
-	if err := c.repo.UpsertMatchDetails(ctx, detailsPayload); err != nil {
-		return fmt.Errorf("upsert match details: %w", err)
-	}
-
-	if isNew && c.cfg.Notifications.Enabled {
-		message := fmt.Sprintf("Match %d Round %d is running on %s:%d with password %s", match.ID, round.ID, nodeIP, state.Ports.Game, state.Password)
-		link := fmt.Sprintf(c.cfg.Notifications.LinkFormat, match.ID)
-		if err := c.repo.SendNotificationsToTeams(ctx, match.RosterHomeID, match.RosterAwayID, message, link); err != nil {
-			klog.Errorf("notifications failed for match %d: %v", match.ID, err)
+	// Only send notifications if the deployment is ready and this is a new server
+	if ready && isNew && c.cfg.Notifications.Enabled {
+		nodeIP, err := c.pickNodeIP(ctx)
+		if err != nil {
+			klog.Errorf("failed to get node IP for notifications: %v", err)
+		} else {
+			message := fmt.Sprintf("Match %d Round %d is running on %s:%d with password %s", match.ID, round.ID, nodeIP, state.Ports.Game, state.Password)
+			link := fmt.Sprintf(c.cfg.Notifications.LinkFormat, match.ID)
+			if err := c.repo.SendNotificationsToTeams(ctx, match.RosterHomeID, match.RosterAwayID, message, link); err != nil {
+				klog.Errorf("notifications failed for match %d: %v", match.ID, err)
+			}
 		}
 	}
 
@@ -517,6 +541,40 @@ func (c *Controller) deleteHelmRelease(ctx context.Context, releaseName string, 
 		return fmt.Errorf("helm renderer is not configured")
 	}
 	return c.renderer.Delete(ctx, releaseName, overrides)
+}
+
+// isDeploymentReady checks if the deployment has at least one running pod
+func (c *Controller) isDeploymentReady(ctx context.Context, releaseName string) (bool, error) {
+	labelSelector := fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName)
+	pods, err := c.clientset.CoreV1().Pods(c.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return false, fmt.Errorf("list pods: %w", err)
+	}
+
+	if len(pods.Items) == 0 {
+		return false, nil
+	}
+
+	// Check if at least one pod is running
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			// Additionally check if all containers are ready
+			allReady := true
+			for _, containerStatus := range pod.Status.ContainerStatuses {
+				if !containerStatus.Ready {
+					allReady = false
+					break
+				}
+			}
+			if allReady {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func envVar(name string, value interface{}) map[string]interface{} {
