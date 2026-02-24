@@ -86,6 +86,12 @@ func (c *Controller) reconcile(ctx context.Context) error {
 			klog.Errorf("match %d reconcile error: %v", match.ID, err)
 		}
 	}
+
+	// Clean up orphaned servers (servers that exist but shouldn't)
+	if err := c.cleanupOrphanedServers(ctx); err != nil {
+		klog.Errorf("orphaned server cleanup error: %v", err)
+	}
+
 	return nil
 }
 
@@ -132,6 +138,7 @@ func (c *Controller) reconcileMatch(ctx context.Context, match database.Match) e
 			return fmt.Errorf("fetch match details: %w", err)
 		}
 
+		// Server is needed if manual flag is set OR round has no outcome yet
 		needsServer := match.ManualNotDone || !round.HasOutcome
 		releaseName := releaseName(match.ID, round.ID)
 
@@ -142,6 +149,7 @@ func (c *Controller) reconcileMatch(ctx context.Context, match database.Match) e
 			continue
 		}
 
+		// Teardown if server exists but is no longer needed
 		if details != nil {
 			if err := c.teardownRound(ctx, match, round, division.ID, league, homeIDs, awayIDs, mapName, releaseName, details); err != nil {
 				klog.Errorf("teardown round %d: %v", round.ID, err)
@@ -527,6 +535,122 @@ func (c *Controller) divisionMatchesFilter(name string) bool {
 		}
 	}
 	return false
+}
+
+func (c *Controller) isMatchStatusCompleted(status int) bool {
+	for _, completedStatus := range c.cfg.Match.CompletedStatuses {
+		if status == completedStatus {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanupOrphanedServers finds servers that exist but shouldn't (e.g., match completed, round has outcome)
+func (c *Controller) cleanupOrphanedServers(ctx context.Context) error {
+	// Get all match details (active servers)
+	allDetails, err := c.repo.FetchAllMatchDetails(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch all match details: %w", err)
+	}
+
+	for _, detail := range allDetails {
+		// Fetch the match to check its status
+		match, err := c.repo.FetchMatchByID(ctx, detail.MatchID)
+		if err != nil {
+			klog.Warningf("failed to fetch match %d for cleanup check: %v", detail.MatchID, err)
+			continue
+		}
+
+		// If match is completed, tear down the server
+		if c.isMatchStatusCompleted(match.Status) {
+			klog.Infof("cleaning up orphaned server for completed match %d round %d", detail.MatchID, detail.RoundID)
+			if err := c.cleanupServerByDetails(ctx, detail); err != nil {
+				klog.Errorf("failed to cleanup server for match %d round %d: %v", detail.MatchID, detail.RoundID, err)
+			}
+			continue
+		}
+
+		// Fetch round to check if it has outcome
+		round, err := c.repo.FetchMatchRoundByID(ctx, detail.MatchID, detail.RoundID)
+		if err != nil {
+			klog.Warningf("failed to fetch round %d for match %d cleanup check: %v", detail.RoundID, detail.MatchID, err)
+			continue
+		}
+
+		// If round has outcome and manual flag is not set, tear down
+		if round.HasOutcome && !match.ManualNotDone {
+			klog.Infof("cleaning up orphaned server for match %d round %d (has outcome)", detail.MatchID, detail.RoundID)
+			if err := c.cleanupServerByDetails(ctx, detail); err != nil {
+				klog.Errorf("failed to cleanup server for match %d round %d: %v", detail.MatchID, detail.RoundID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// cleanupServerByDetails tears down a server using just the match details
+func (c *Controller) cleanupServerByDetails(ctx context.Context, detail database.MatchDetails) error {
+	releaseName := releaseName(detail.MatchID, detail.RoundID)
+
+	// Load state from secret
+	state, err := c.loadServerState(ctx, releaseName)
+	if err != nil {
+		return fmt.Errorf("load state for cleanup: %w", err)
+	}
+
+	// If no state found, reconstruct minimal state from details
+	if state == nil {
+		state = &serverState{
+			ReleaseName: releaseName,
+			Ports: ports.Assignment{
+				Game:     detail.Port,
+				SourceTV: detail.SourceTVPort,
+				Client:   detail.Port + 1,
+				Steam:    detail.Port + 2,
+			},
+			Password: detail.Password,
+			RCON:     "",
+			Map:      detail.Map,
+			Token:    c.cfg.SRCDS.StaticToken,
+		}
+	}
+
+	// Delete Helm release (pods, services, etc.) using minimal values
+	values := chartutil.Values{
+		"workload": map[string]interface{}{
+			"nameOverride": releaseName,
+		},
+		"service": map[string]interface{}{
+			"nameOverride": releaseName,
+		},
+		"app": map[string]interface{}{
+			"name": releaseName,
+		},
+	}
+
+	if err := c.deleteHelmRelease(ctx, releaseName, values); err != nil {
+		klog.Warningf("failed to delete helm release for cleanup: %v", err)
+	}
+
+	// Delete match details from database
+	if err := c.repo.DeleteMatchDetails(ctx, detail.MatchID, detail.RoundID); err != nil {
+		return fmt.Errorf("delete match details: %w", err)
+	}
+
+	// Delete state secret
+	if err := c.deleteStateSecret(ctx, releaseName); err != nil {
+		klog.Warningf("failed to delete state secret for cleanup: %v", err)
+	}
+
+	// Clean up Steam token if enabled
+	if err := c.cleanupSRCDSToken(detail.MatchID, detail.RoundID); err != nil {
+		klog.Warningf("failed to cleanup SRCDS token for match %d round %d: %v", detail.MatchID, detail.RoundID, err)
+	}
+
+	klog.Infof("cleaned up orphaned server for match %d round %d", detail.MatchID, detail.RoundID)
+	return nil
 }
 
 func (c *Controller) applyHelmRelease(ctx context.Context, releaseName string, overrides chartutil.Values) error {

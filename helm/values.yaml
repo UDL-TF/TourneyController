@@ -43,6 +43,8 @@ controllerConfig:
   chartValuesFile: /etc/tourney/tf2-values.yaml
   matchStatuses:
     - 0
+  matchCompletedStatuses:
+    - 3
   divisionFilters: []
   defaultMap: tfdb_octagon_odb_a1
   hostNetwork: true

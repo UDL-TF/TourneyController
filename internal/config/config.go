@@ -100,9 +100,10 @@ type SteamConfig struct {
 
 // MatchConfig configures which matches should be reconciled.
 type MatchConfig struct {
-	TargetStatuses  []int
-	DefaultMap      string
-	DivisionFilters []string
+	TargetStatuses    []int // Match statuses to process (both active and completed)
+	CompletedStatuses []int // Match statuses that indicate completion (should tear down servers)
+	DefaultMap        string
+	DivisionFilters   []string
 }
 
 // NetworkingConfig controls Kubernetes networking knobs.
@@ -248,15 +249,21 @@ func Load() (*Config, error) {
 		return nil, errors.New("MATCH_STATUSES must include at least one status code")
 	}
 
+	completedStatuses, err := parseIntSlice(getEnv("MATCH_COMPLETED_STATUSES", "3"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid MATCH_COMPLETED_STATUSES: %w", err)
+	}
+
 	divisionFilters := parseStringSlice(getEnv("MATCH_DIVISION_FILTERS", ""))
 	for i := range divisionFilters {
 		divisionFilters[i] = strings.ToLower(divisionFilters[i])
 	}
 
 	cfg.Match = MatchConfig{
-		TargetStatuses:  statuses,
-		DefaultMap:      getEnv("DEFAULT_MAP", "tfdb_octagon_odb_a1"),
-		DivisionFilters: divisionFilters,
+		TargetStatuses:    statuses,
+		CompletedStatuses: completedStatuses,
+		DefaultMap:        getEnv("DEFAULT_MAP", "tfdb_octagon_odb_a1"),
+		DivisionFilters:   divisionFilters,
 	}
 
 	hostNetwork, err := getEnvBool("HOST_NETWORK", false)

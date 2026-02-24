@@ -118,6 +118,8 @@ spec:
               value: {{ .Values.srcds.rconLength | toString | quote }}
             - name: MATCH_STATUSES
               value: {{ include "tourney-controller.matchStatuses" . | quote }}
+            - name: MATCH_COMPLETED_STATUSES
+              value: {{ include "tourney-controller.matchCompletedStatuses" . | quote }}
             - name: MATCH_DIVISION_FILTERS
               value: {{ join "," (.Values.controllerConfig.divisionFilters | default (list)) | quote }}
             - name: DEFAULT_MAP

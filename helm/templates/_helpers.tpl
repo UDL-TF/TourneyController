@@ -55,6 +55,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{- define "tourney-controller.matchCompletedStatuses" -}}
+{{- $statuses := .Values.controllerConfig.matchCompletedStatuses | default (list) -}}
+{{- if not $statuses -}}
+3
+{{- else -}}
+{{- $sep := "" -}}
+{{- range $statuses }}
+{{- printf "%s%v" $sep . -}}
+{{- $sep = "," -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "tourney-controller.dbSecretName" -}}
 {{- printf "%s-db" (include "tourney-controller.fullname" .) -}}
 {{- end -}}

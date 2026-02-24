@@ -294,6 +294,52 @@ func (r *Repository) FetchMatchDetails(ctx context.Context, matchID, roundID int
 	return &details, nil
 }
 
+// FetchAllMatchDetails retrieves all match server details (all active servers).
+func (r *Repository) FetchAllMatchDetails(ctx context.Context) ([]MatchDetails, error) {
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT match_id, round_id, server_ip, port, sourcetvport, password, map
+        FROM matches_server_details
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("query all match details: %w", err)
+	}
+	defer rows.Close()
+
+	var allDetails []MatchDetails
+	for rows.Next() {
+		var details MatchDetails
+		var portStr, sourceTVStr string
+		if err := rows.Scan(
+			&details.MatchID,
+			&details.RoundID,
+			&details.ServerIP,
+			&portStr,
+			&sourceTVStr,
+			&details.Password,
+			&details.Map,
+		); err != nil {
+			return nil, fmt.Errorf("scan match details: %w", err)
+		}
+
+		details.Port, err = strconv.Atoi(strings.TrimSpace(portStr))
+		if err != nil {
+			return nil, fmt.Errorf("parse port from details: %w", err)
+		}
+		details.SourceTVPort, err = strconv.Atoi(strings.TrimSpace(sourceTVStr))
+		if err != nil {
+			return nil, fmt.Errorf("parse sourcetv port from details: %w", err)
+		}
+
+		allDetails = append(allDetails, details)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate match details: %w", err)
+	}
+
+	return allDetails, nil
+}
+
 // UpsertMatchDetails inserts or updates the matches_server_details row.
 func (r *Repository) UpsertMatchDetails(ctx context.Context, details MatchDetails) error {
 	_, err := r.db.ExecContext(ctx, `
