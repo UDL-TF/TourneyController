@@ -351,7 +351,7 @@ func (c *Controller) buildValues(
 	env := []map[string]interface{}{
 		envVar("SRCDS_PORT", state.Ports.Game),
 		envVar("SRCDS_PW", state.Password),
-		envVar("SRCDS_MAXPLAYERS", maxPlayers),
+		envVar("SRCDS_MAXPLAYERS", "24"),
 		envVar("SRCDS_TICKRATE", c.cfg.SRCDS.TickRate),
 		envVar("SRCDS_RCONPW", state.RCON),
 		envVar("SRCDS_STARTMAP", preferValue(state.Map, c.cfg.Match.DefaultMap, "")),
