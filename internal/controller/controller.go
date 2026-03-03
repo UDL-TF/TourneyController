@@ -138,8 +138,13 @@ func (c *Controller) reconcileMatch(ctx context.Context, match database.Match) e
 			return fmt.Errorf("fetch match details: %w", err)
 		}
 
-		// Server is needed if manual flag is set OR (round has no outcome AND both teams are ready)
-		needsServer := match.ManualNotDone || (!round.HasOutcome && round.HomeReady && round.AwayReady)
+		// Server is needed if:
+		// 1. Manual flag is set, OR
+		// 2. Round has no outcome AND both teams are ready (to create new server), OR
+		// 3. Server already exists AND round has no outcome (to keep existing server running)
+		needsServer := match.ManualNotDone ||
+			(!round.HasOutcome && round.HomeReady && round.AwayReady) ||
+			(details != nil && !round.HasOutcome)
 		releaseName := releaseName(match.ID, round.ID)
 
 		if needsServer {
