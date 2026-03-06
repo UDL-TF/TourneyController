@@ -636,7 +636,7 @@ func (c *Controller) cleanupServerByDetails(ctx context.Context, detail database
 	}
 
 	if err := c.deleteHelmRelease(ctx, releaseName, values); err != nil {
-		klog.Warningf("failed to delete helm release for cleanup: %v", err)
+		return fmt.Errorf("delete helm release for cleanup: %w", err)
 	}
 
 	// Delete match details from database
