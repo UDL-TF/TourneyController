@@ -320,7 +320,12 @@ func (c *Controller) teardownRound(
 	}
 
 	if err := c.deleteHelmRelease(ctx, releaseName, c.buildValues(match, round, divisionID, league, homeIDs, awayIDs, state)); err != nil {
-		return fmt.Errorf("delete helm release: %w", err)
+		// If Helm deletion fails, try direct resource cleanup as fallback
+		klog.Errorf("helm release deletion failed for %s, attempting direct cleanup: %v", releaseName, err)
+		if directErr := c.directResourceCleanup(ctx, releaseName); directErr != nil {
+			return fmt.Errorf("helm delete failed (%w) and direct cleanup failed (%v)", err, directErr)
+		}
+		klog.Infof("direct cleanup succeeded for %s after helm deletion failure", releaseName)
 	}
 
 	if err := c.repo.DeleteMatchDetails(ctx, match.ID, round.ID); err != nil {
@@ -328,7 +333,8 @@ func (c *Controller) teardownRound(
 	}
 
 	if err := c.deleteStateSecret(ctx, releaseName); err != nil {
-		return fmt.Errorf("delete secret: %w", err)
+		klog.Errorf("failed to delete state secret %s: %v", releaseName, err)
+		// Don't return early - continue with other cleanup
 	}
 
 	// Clean up Steam token if enabled
@@ -622,18 +628,58 @@ func (c *Controller) cleanupServerByDetails(ctx context.Context, detail database
 		}
 	}
 
-	// Delete Helm release (pods, services, etc.) using minimal values
-	values := chartutil.Values{
-		"workload": map[string]interface{}{
-			"nameOverride": releaseName,
-		},
-		"service": map[string]interface{}{
-			"nameOverride": releaseName,
-		},
-		"app": map[string]interface{}{
-			"name": releaseName,
-		},
+	// Fetch necessary data to build complete values for proper cleanup
+	// This ensures all resources are included in the deletion manifest
+	match, err := c.repo.FetchMatchByID(ctx, detail.MatchID)
+	if err != nil {
+		// If we can't fetch match data, try direct resource cleanup as fallback
+		if err := c.directResourceCleanup(ctx, releaseName); err != nil {
+			klog.Errorf("failed direct resource cleanup for %s: %v", releaseName, err)
+		}
+		return fmt.Errorf("fetch match for cleanup: %w", err)
 	}
+
+	round, err := c.repo.FetchMatchRoundByID(ctx, detail.MatchID, detail.RoundID)
+	if err != nil {
+		// If we can't fetch round data, try direct resource cleanup as fallback
+		if err := c.directResourceCleanup(ctx, releaseName); err != nil {
+			klog.Errorf("failed direct resource cleanup for %s: %v", releaseName, err)
+		}
+		return fmt.Errorf("fetch round for cleanup: %w", err)
+	}
+
+	division, err := c.repo.FetchDivision(ctx, match.RosterHomeID)
+	if err != nil {
+		// If we can't fetch division data, try direct resource cleanup as fallback
+		if err := c.directResourceCleanup(ctx, releaseName); err != nil {
+			klog.Errorf("failed direct resource cleanup for %s: %v", releaseName, err)
+		}
+		return fmt.Errorf("fetch division for cleanup: %w", err)
+	}
+
+	league, err := c.repo.FetchLeague(ctx, division.ID)
+	if err != nil {
+		// If we can't fetch league data, try direct resource cleanup as fallback
+		if err := c.directResourceCleanup(ctx, releaseName); err != nil {
+			klog.Errorf("failed direct resource cleanup for %s: %v", releaseName, err)
+		}
+		return fmt.Errorf("fetch league for cleanup: %w", err)
+	}
+
+	homeIDs, err := c.repo.FetchTeamSteamIDs(ctx, match.RosterHomeID)
+	if err != nil {
+		klog.Warningf("failed to fetch home team steam IDs for cleanup, using empty: %v", err)
+		homeIDs = []string{}
+	}
+
+	awayIDs, err := c.repo.FetchTeamSteamIDs(ctx, match.RosterAwayID)
+	if err != nil {
+		klog.Warningf("failed to fetch away team steam IDs for cleanup, using empty: %v", err)
+		awayIDs = []string{}
+	}
+
+	// Use the complete values structure like teardownRound does
+	values := c.buildValues(*match, *round, division.ID, league, homeIDs, awayIDs, state)
 
 	if err := c.deleteHelmRelease(ctx, releaseName, values); err != nil {
 		return fmt.Errorf("delete helm release for cleanup: %w", err)
@@ -655,6 +701,57 @@ func (c *Controller) cleanupServerByDetails(ctx context.Context, detail database
 	}
 
 	klog.Infof("cleaned up orphaned server for match %d round %d", detail.MatchID, detail.RoundID)
+	return nil
+}
+
+// directResourceCleanup is a fallback method to clean up Kubernetes resources directly
+// when we can't build complete Helm values for proper cleanup
+func (c *Controller) directResourceCleanup(ctx context.Context, releaseName string) error {
+	labelSelector := fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName)
+
+	// Delete pods
+	if err := c.clientset.CoreV1().Pods(c.cfg.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}); err != nil && !k8serrors.IsNotFound(err) {
+		klog.Errorf("failed to delete pods for %s: %v", releaseName, err)
+	}
+
+	// Delete services (list first, then delete individually as DeleteCollection is not available)
+	services, err := c.clientset.CoreV1().Services(c.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		klog.Errorf("failed to list services for %s: %v", releaseName, err)
+	} else {
+		for _, service := range services.Items {
+			if err := c.clientset.CoreV1().Services(c.cfg.Namespace).Delete(ctx, service.Name, metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
+				klog.Errorf("failed to delete service %s for %s: %v", service.Name, releaseName, err)
+			}
+		}
+	}
+
+	// Delete deployments
+	if err := c.clientset.AppsV1().Deployments(c.cfg.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}); err != nil && !k8serrors.IsNotFound(err) {
+		klog.Errorf("failed to delete deployments for %s: %v", releaseName, err)
+	}
+
+	// Delete secrets (both state secrets and any other secrets with the label)
+	if err := c.clientset.CoreV1().Secrets(c.cfg.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}); err != nil && !k8serrors.IsNotFound(err) {
+		klog.Errorf("failed to delete secrets for %s: %v", releaseName, err)
+	}
+
+	// Delete configmaps
+	if err := c.clientset.CoreV1().ConfigMaps(c.cfg.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}); err != nil && !k8serrors.IsNotFound(err) {
+		klog.Errorf("failed to delete configmaps for %s: %v", releaseName, err)
+	}
+
+	klog.Infof("performed direct resource cleanup for %s", releaseName)
 	return nil
 }
 
@@ -1037,7 +1134,27 @@ func (c *Controller) DeleteServer(ctx context.Context, matchID, roundID int) err
 
 	// Use teardownRound to perform the actual cleanup
 	if err := c.teardownRound(ctx, *match, *round, division.ID, league, homeIDs, awayIDs, mapName, releaseName, details); err != nil {
-		return fmt.Errorf("failed to teardown round: %w", err)
+		klog.Errorf("teardownRound failed for match %d round %d, attempting direct cleanup: %v", matchID, roundID, err)
+
+		// Fallback to direct resource cleanup
+		if directErr := c.directResourceCleanup(ctx, releaseName); directErr != nil {
+			return fmt.Errorf("teardown failed (%w) and direct cleanup failed (%v)", err, directErr)
+		}
+
+		// Manual cleanup of database and secrets since teardownRound failed
+		if err := c.repo.DeleteMatchDetails(ctx, matchID, roundID); err != nil {
+			klog.Errorf("failed to delete match details during fallback cleanup: %v", err)
+		}
+
+		if err := c.deleteStateSecret(ctx, releaseName); err != nil {
+			klog.Errorf("failed to delete state secret during fallback cleanup: %v", err)
+		}
+
+		if err := c.cleanupSRCDSToken(matchID, roundID); err != nil {
+			klog.Errorf("failed to cleanup SRCDS token during fallback cleanup: %v", err)
+		}
+
+		klog.Infof("fallback cleanup succeeded for match %d round %d", matchID, roundID)
 	}
 
 	klog.Infof("successfully deleted server for match %d round %d", matchID, roundID)
