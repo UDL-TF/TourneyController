@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +91,11 @@ func (c *Controller) reconcile(ctx context.Context) error {
 	// Clean up orphaned servers (servers that exist but shouldn't)
 	if err := c.cleanupOrphanedServers(ctx); err != nil {
 		klog.Errorf("orphaned server cleanup error: %v", err)
+	}
+
+	// Clean up dangling deployments (K8s resources with no database record)
+	if err := c.cleanupDanglingDeployments(ctx); err != nil {
+		klog.Errorf("dangling deployment cleanup error: %v", err)
 	}
 
 	return nil
@@ -701,6 +707,83 @@ func (c *Controller) cleanupServerByDetails(ctx context.Context, detail database
 	}
 
 	klog.Infof("cleaned up orphaned server for match %d round %d", detail.MatchID, detail.RoundID)
+	return nil
+}
+
+// releaseNamePattern matches the naming convention "udl-{matchID}-r{roundID}"
+var releaseNamePattern = regexp.MustCompile(`^udl-(\d+)-r(\d+)$`)
+
+// cleanupDanglingDeployments finds and removes Kubernetes deployments that have no
+// corresponding match_details in the database. This handles the case where database
+// records were deleted but Kubernetes resources remain.
+func (c *Controller) cleanupDanglingDeployments(ctx context.Context) error {
+	// List all deployments in the namespace
+	deployments, err := c.clientset.AppsV1().Deployments(c.cfg.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list deployments: %w", err)
+	}
+
+	// Get all match details to build a set of known servers
+	allDetails, err := c.repo.FetchAllMatchDetails(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch all match details: %w", err)
+	}
+
+	// Build a set of known release names from database
+	knownReleaseNames := make(map[string]bool)
+	for _, detail := range allDetails {
+		knownReleaseNames[releaseName(detail.MatchID, detail.RoundID)] = true
+	}
+
+	// Find deployments that match our naming pattern but have no database record
+	for _, deployment := range deployments.Items {
+		name := deployment.Name
+
+		// Check if this deployment matches our naming pattern
+		matches := releaseNamePattern.FindStringSubmatch(name)
+		if matches == nil {
+			continue // Not a tournament server deployment
+		}
+
+		// Parse match and round IDs
+		matchID, err := strconv.Atoi(matches[1])
+		if err != nil {
+			continue
+		}
+		roundID, err := strconv.Atoi(matches[2])
+		if err != nil {
+			continue
+		}
+
+		relName := releaseName(matchID, roundID)
+
+		// If this release name is known in the database, skip it
+		// (it will be handled by normal cleanup logic)
+		if knownReleaseNames[relName] {
+			continue
+		}
+
+		// This deployment has no database record - it's dangling
+		klog.Infof("found dangling deployment %s (match %d round %d) with no database record, cleaning up", name, matchID, roundID)
+
+		if err := c.directResourceCleanup(ctx, relName); err != nil {
+			klog.Errorf("failed to cleanup dangling deployment %s: %v", name, err)
+			continue
+		}
+
+		// Also try to clean up any state secret that might exist
+		if err := c.deleteStateSecret(ctx, relName); err != nil {
+			klog.V(2).Infof("no state secret found for dangling deployment %s (expected): %v", name, err)
+		}
+
+		// Try to cleanup Steam token if enabled
+		if err := c.cleanupSRCDSToken(matchID, roundID); err != nil {
+			klog.Warningf("failed to cleanup SRCDS token for dangling deployment %s: %v", name, err)
+		}
+
+		klog.Infof("cleaned up dangling deployment %s", name)
+	}
+
 	return nil
 }
 
