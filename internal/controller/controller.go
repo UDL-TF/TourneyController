@@ -713,6 +713,11 @@ func (c *Controller) cleanupServerByDetails(ctx context.Context, detail database
 // releaseNamePattern matches the naming convention "udl-{matchID}-r{roundID}"
 var releaseNamePattern = regexp.MustCompile(`^udl-(\d+)-r(\d+)$`)
 
+// danglingDeploymentGracePeriod is the minimum age a deployment must have before
+// being considered for dangling cleanup. This prevents deleting deployments that
+// are still being provisioned (deployment exists but DB record not yet created).
+const danglingDeploymentGracePeriod = 5 * time.Minute
+
 // cleanupDanglingDeployments finds and removes Kubernetes deployments that have no
 // corresponding match_details in the database. This handles the case where database
 // records were deleted but Kubernetes resources remain.
@@ -760,6 +765,15 @@ func (c *Controller) cleanupDanglingDeployments(ctx context.Context) error {
 		// If this release name is known in the database, skip it
 		// (it will be handled by normal cleanup logic)
 		if knownReleaseNames[relName] {
+			continue
+		}
+
+		// Skip deployments that are younger than the grace period - they may still
+		// be provisioning (deployment created but DB record not yet inserted)
+		deploymentAge := time.Since(deployment.CreationTimestamp.Time)
+		if deploymentAge < danglingDeploymentGracePeriod {
+			klog.V(2).Infof("skipping dangling deployment %s (age %v < grace period %v), may still be provisioning",
+				name, deploymentAge.Round(time.Second), danglingDeploymentGracePeriod)
 			continue
 		}
 
