@@ -16,7 +16,7 @@ rules:
       - persistentvolumeclaims
       - serviceaccounts
       - events
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
   - apiGroups: [""]
     resources:
       - nodes
@@ -27,7 +27,7 @@ rules:
       - statefulsets
       - daemonsets
       - replicasets
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
   - apiGroups: ["batch"]
     resources:
       - jobs
